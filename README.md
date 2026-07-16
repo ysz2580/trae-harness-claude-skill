@@ -11,7 +11,7 @@
 - **TRAE 的角色**：纯传话筒——拼接 prompt → 调用 CC → 原样返回输出。不加工、不验收、不给第二意见、不做越界检查。
 - **不带触发词**的任务（如「帮我写个快排」）走 TRAE 正常流程，**不**调用 CC。
 
-项目本身不含可执行代码，只是一个技能定义包，通过 `.trae/skills/claude-harness/` 目录向 TRAE 注入「如何做传话筒」的知识。
+项目本身不含业务逻辑代码，只是一个技能定义包 + 一个调用器脚本，通过 `.trae/skills/claude-harness/` 目录向 TRAE 注入「如何做传话筒」的知识。
 
 ## 目录结构
 
@@ -27,19 +27,34 @@
 ## 前置依赖
 
 1. **Windows + PowerShell**（技能命令按 PowerShell 语法编写）。
-2. **已安装 Claude Code CLI** 并完成登录认证。安装方式不限——只要 `claude` 在 PATH 上，技能会自动识别；不在 PATH 也行，见下方「配置（可选）」。
+2. **TRAE**：已安装 TRAE IDE 或 TRAE CLI（本技能运行在 TRAE 里）。
+3. **Claude Code CLI 已安装并登录**：在终端执行 `claude` 能正常进入对话即算就绪。未安装见官方文档 https://docs.claude.com/en/docs/claude-code 。安装方式不限——只要 `claude` 在 PATH 上，技能会自动识别；不在 PATH 也行，见下方「配置（可选）」。
 
 ## 安装
 
-### 作为项目级技能（仅在本项目目录生效）
+### 1. 获取技能
 
-直接在本项目目录下用 TRAE IDE 打开，或 TRAE CLI `cd` 到本项目即可。执行 `/skills` 应能看到 `claude-harness`。
+```powershell
+git clone https://github.com/ysz2580/trae-harness-claude-skill.git
+```
 
-### 作为全局技能（所有项目都能用）
+或在本仓库页面点 **Code → Download ZIP**，解压即可。
 
-把 `.trae/skills/claude-harness/` **整个目录**复制到：
+### 2. 装到 TRAE（两种方式任选其一）
 
-- **Windows**：`%userprofile%\.trae-cn\skills\`
+**方式 A：项目级技能**（仅在该项目目录下生效）
+
+用 TRAE IDE 打开 clone 下来的仓库根目录（`trae-harness-claude-skill`，内含 `.trae/`），或 TRAE CLI `cd` 到该目录。执行 `/skills` 应能看到 `claude-harness`。
+
+**方式 B：全局技能**（所有项目都能用）
+
+把仓库里的 `.trae/skills/claude-harness/` **整个目录**复制到 `%userprofile%\.trae-cn\skills\` 下。最终结构应为：
+
+```
+%userprofile%\.trae-cn\skills\claude-harness\SKILL.md
+%userprofile%\.trae-cn\skills\claude-harness\config.json
+%userprofile%\.trae-cn\skills\claude-harness\resources\...
+```
 
 ## 配置（通常无需配置）
 
@@ -94,6 +109,15 @@
 
 **新话题 vs 追问**：对上一次结果做修改/补充/追问 → 追问（`-c`）；新方向/新任务 → 新话题；拿不准 → 默认新话题。
 
+## 验证安装
+
+1. 在 TRAE 中执行 `/skills`，确认 `claude-harness` 出现。
+2. 输入 `CC：你好` —— 应触发技能，调用 CC 并原样返回（这一步建立了 CC 上下文）。
+3. 输入 `帮我写个快排`（不带触发词）—— 应走 TRAE 正常流程，**不**调用 CC。
+4. 紧接**第 2 步**输入 `CC：再介绍一下你自己` —— 应使用 `-c` 追问模式（复用第 2 步的 CC 上下文）。
+
+若第 2 步报「未找到 claude 可执行文件」，说明 claude 不在 PATH——按上方「配置」填 `claude_path`，或先把 `claude` 加入 PATH。
+
 ## 安全提示（请务必阅读）
 
 本技能针对**语音远程控制**场景，有意采用了与一般最佳实践不同的策略：
@@ -107,13 +131,6 @@
 - CC 可能修改或删除任意文件（因跳过权限确认）。
 - CC 可能执行任意命令（包括破坏性命令）。
 - **强烈建议**在工作目录用 Git 管理版本，便于出问题时回滚。
-
-## 验证安装
-
-1. 在 TRAE 中执行 `/skills`，确认 `claude-harness` 出现。
-2. 输入 `CC：你好` —— 应触发技能，调用 CC 并原样返回。
-3. 输入 `帮我写个快排`（不带触发词）—— 应走 TRAE 正常流程，**不**调用 CC。
-4. 紧接上一步输入 `CC：改成降序` —— 应使用 `-c` 追问模式。
 
 ## 更多细节
 
