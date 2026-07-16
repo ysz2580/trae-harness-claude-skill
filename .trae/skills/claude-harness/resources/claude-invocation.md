@@ -5,50 +5,58 @@
 ## 环境信息
 
 - **目标系统**：Windows + PowerShell
-- **Claude Code 路径**：从本技能目录下的 `config.json` 读取（字段 `claude_path`）。每个用户的安装位置不同，**不要写死**。加载时用 `Test-Path` 校验，不存在则报错并停止。
-- **额外参数**：从 `config.json` 的 `extra_args` 字段读取（默认 `--dangerously-skip-permissions`）。
-- **路径含空格**：必须用 `& '路径'` 形式调用（PowerShell 调用操作符）。
-- **权限模式**：固定 `--dangerously-skip-permissions`（语音远程场景无法交互确认）。
+- **Claude Code 路径**：由 `resources\claude-harness.ps1` 自动探测，**不写死**。探测优先级：`config.json` 的 `claude_path` → PATH 上的 `claude`（`Get-Command`）→ 常见安装位置兜底。任一命中即可用。
+- **额外参数**：`config.json` 的 `extra_args`（默认 `--dangerously-skip-permissions`）。
+- **权限模式**：默认 `--dangerously-skip-permissions`（语音远程场景无法交互确认）。
 - **工作目录来源**：系统提示中的终端 `cwd` 信息（如 `cwd is e:\claude_trae`）。同一会话内固定，不重复检测。
 
-### 读取配置
+### 调用入口（经由脚本）
+
+所有调用走 `claude-harness.ps1`，它负责探测路径、读 config、组装参数。agent 只需定位并调用它：
 
 ```powershell
-$cfg = Get-Content "<技能目录>\config.json" -Raw | ConvertFrom-Json
-if (-not (Test-Path $cfg.claude_path)) {
-  Write-Error "config.json 中 claude_path 无效：$($cfg.claude_path)"
+# 定位 claude-harness.ps1
+$s = $null; $d = $PWD.Path
+while ($d -and -not $s) {
+  $p = Join-Path $d '.trae\skills\claude-harness\resources\claude-harness.ps1'
+  if (Test-Path $p) { $s = $p }
+  $n = Split-Path $d -Parent
+  if (-not $n -or $n -eq $d) { break }; $d = $n
 }
-# 之后用 & $cfg.claude_path ... $cfg.extra_args
+if (-not $s) {
+  $g = Join-Path $env:USERPROFILE '.trae-cn\skills\claude-harness\resources\claude-harness.ps1'
+  if (Test-Path $g) { $s = $g }
+}
 ```
 
-下文命令模板中 `claude` 代指 `$cfg.claude_path`，`<extra_args>` 代指 `$cfg.extra_args`。
+下文命令模板中 `$s` 即定位到的脚本。
 
 ## 命令模板
 
 ### 新话题
 
 ```powershell
-& $cfg.claude_path -p "完整prompt" $cfg.extra_args
+& $s -Prompt "完整prompt" -WorkingDirectory "{工作目录}"
 ```
 
 ### 追问（接续上下文）
 
 ```powershell
-& $cfg.claude_path -c -p "完整prompt" $cfg.extra_args
+& $s -Prompt "完整prompt" -WorkingDirectory "{工作目录}" -Continue
 ```
 
-`-c` / `--continue`：复用上一轮 CC 上下文。仅在用户对上一次结果做修改/补充/追问时使用；拿不准时默认不加 `-c`。
+`-Continue` 对应 `claude -c`，复用上一轮 CC 上下文。仅在用户对上一次结果做修改/补充/追问时使用；拿不准时默认不加。
 
 ## RunCommand 调用参数
 
 ```
-command:           见上方模板（追问时加 -c）
+command:           & $s -Prompt "完整prompt" -WorkingDirectory "{工作目录}"
 cwd:               {工作目录}（从终端 cwd 获取，或用户指定目录）
 blocking:          true   （语音场景同步等待结果）
 requires_approval: false  （触发词已表明用户授权）
 ```
 
-`<extra_args>` 与 `claude` 均从 `config.json` 读取。
+追问时 command 末尾加 `-Continue`。`$s` 由上方定位代码取得。
 
 ## Prompt 拼接规则
 
@@ -82,21 +90,19 @@ prompt 中**必须**用绝对路径指定保存位置：
 工作目录为 {工作目录}，所有文件操作请在该目录下进行
 ```
 
-## PowerShell 引号与转义
+## Prompt 传入与转义
 
-prompt 中的双引号是 PowerShell 字符串边界。处理方式：
+prompt 经 `claude-harness.ps1` 的 `-Prompt` 参数传入，**作为变量传递**，因此天然避开 PowerShell 字符串边界的转义问题——含双引号、反斜杠路径的 prompt 直接写进字符串字面量即可。
 
-### 方式 1：prompt 中无双引号时
-
-直接用双引号包裹：
+### 普通 prompt
 
 ```powershell
-& $cfg.claude_path -p "写一个快速排序算法，保存到 E:\project\webapp\quicksort.py。工作目录为 E:\project\webapp，所有文件操作请在该目录下进行" $cfg.extra_args
+& $s -Prompt "写一个快速排序算法，保存到 E:\project\webapp\quicksort.py。工作目录为 E:\project\webapp，所有文件操作请在该目录下进行" -WorkingDirectory "E:\project\webapp"
 ```
 
-### 方式 2：prompt 中含双引号时
+### 含双引号/多行的 prompt
 
-改用 PowerShell Here-string `@" ... "@`，避免转义地狱：
+用双引号字符串里嵌双引号需 ```"``` 转义，或改用 Here-string 赋给变量再传：
 
 ```powershell
 $prompt = @"
@@ -105,14 +111,14 @@ $prompt = @"
 - 输出到 "E:\project\webapp\sort.py"
 工作目录为 E:\project\webapp，所有文件操作请在该目录下进行
 "@
-& $cfg.claude_path -p $prompt $cfg.extra_args
+& $s -Prompt $prompt -WorkingDirectory "E:\project\webapp"
 ```
 
 注意：Here-string 的结束 `"@` 必须在行首，不能有前置空格。
 
-### 方式 3：prompt 中含反斜杠路径
+### 反斜杠路径
 
-PowerShell 双引号字符串中 `\` 不是转义符，路径可以原样写：`E:\project\webapp\file.py` 无需 `\\`。
+PowerShell 双引号字符串中 `\` 不是转义符，路径原样写：`E:\project\webapp\file.py` 无需 `\\`。
 
 ## 文件位置验证（仅当涉及生成文件时）
 
@@ -163,15 +169,15 @@ computer://E:\project\webapp\quicksort.py
 
 ## 完整调用示例
 
+> 以下示例假设已跑过「调用入口」段的定位代码，`$s` 已就绪。
+
 ### 示例 1：新话题，生成文件
 
 工作目录 `E:\project\webapp`，用户输入 `CC：帮我写个快排`：
 
 ```powershell
-& $cfg.claude_path -p "写一个快速排序算法，保存到 E:\project\webapp\quicksort.py。工作目录为 E:\project\webapp，所有文件操作请在该目录下进行" $cfg.extra_args
+& $s -Prompt "写一个快速排序算法，保存到 E:\project\webapp\quicksort.py。工作目录为 E:\project\webapp，所有文件操作请在该目录下进行" -WorkingDirectory "E:\project\webapp"
 ```
-
-`cwd` = `E:\project\webapp`
 
 调用结束后：
 1. `Test-Path "E:\project\webapp\quicksort.py"`
@@ -185,7 +191,7 @@ computer://E:\project\webapp\quicksort.py
 紧接上例，用户输入 `CC：改成降序`：
 
 ```powershell
-& $cfg.claude_path -c -p "改成降序排列" $cfg.extra_args
+& $s -Prompt "改成降序排列" -WorkingDirectory "E:\project\webapp" -Continue
 ```
 
 不追加工作目录说明（CC 已有上下文）。无文件生成步骤。
@@ -195,16 +201,16 @@ computer://E:\project\webapp\quicksort.py
 用户输入 `CC：分析 E:\data\main.py`：
 
 ```powershell
-& $cfg.claude_path -p "分析 E:\data\main.py 这个文件" $cfg.extra_args
+& $s -Prompt "分析 E:\data\main.py 这个文件" -WorkingDirectory "E:\data"
 ```
 
-`cwd` = `E:\data`（用户指定目录优先于会话默认工作目录）
+工作目录 = `E:\data`（用户指定目录优先于会话默认工作目录）
 
 ## 异常处理
 
 | 现象 | 处理 |
 |---|---|
-| `claude.exe` 不存在 / 命令未找到 | 告知用户 Claude Code 未安装或路径错误，原样返回 stderr |
+| `claude.exe` 不存在 / 命令未找到 | 脚本已自动探测 PATH、常见位置、config.json；三者都没找到时输出指引，告知用户「把 claude 加入 PATH，或在 config.json 的 claude_path 填入绝对路径」 |
 | HTTP 401 / 未登录 | 告知用户 CC 认证失效，需在终端执行 `claude` 交互式登录 |
 | CC 执行超时 | 语音场景下用户在等，超时后告知用户「CC 执行超时，请稍后重试或拆分任务」 |
 | 文件未生成 | 告知用户 CC 未产出文件，原样返回 CC 输出供用户判断 |

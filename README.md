@@ -1,6 +1,8 @@
 # trae-harness-claude
 
 > TRAE Skill —— 语音远程控制电脑时，让 TRAE 当 Claude Code 的「传话筒」。
+>
+> ⚠️ **仅支持 Windows + PowerShell**。macOS / Linux 暂不支持（命令为 PowerShell 语法）。
 
 ## 这是什么
 
@@ -16,15 +18,16 @@
 ```
 .trae/skills/claude-harness/
 ├── SKILL.md                          # 技能主文件（角色定位、触发条件、执行流程）
-├── config.json                       # ★ 配置文件：claude.exe 路径与调用参数
+├── config.json                       # 配置文件（可选：仅在 claude 不在 PATH 时需要改）
 └── resources/
+    ├── claude-harness.ps1            # ★ 调用器：自动探测 claude 路径、组装参数、调用 CC
     └── claude-invocation.md          # 调用参考（命令模板、转义、文件验证，按需读取）
 ```
 
 ## 前置依赖
 
 1. **Windows + PowerShell**（技能命令按 PowerShell 语法编写）。
-2. **已安装 Claude Code CLI** 并完成登录认证（终端能跑 `claude` 并正常响应）。
+2. **已安装 Claude Code CLI** 并完成登录认证。安装方式不限——只要 `claude` 在 PATH 上，技能会自动识别；不在 PATH 也行，见下方「配置（可选）」。
 
 ## 安装
 
@@ -37,38 +40,42 @@
 把 `.trae/skills/claude-harness/` **整个目录**复制到：
 
 - **Windows**：`%userprofile%\.trae-cn\skills\`
-- **macOS / Linux**：`~/.trae-cn/skills/`
 
-## 配置（重要）
+## 配置（通常无需配置）
 
-每个用户的 Claude Code 安装位置不同，路径**不写死在文档里**，统一放在 [config.json](.trae/skills/claude-harness/config.json)：
+**大多数用户下载后零配置即可使用**——技能内置的 `resources/claude-harness.ps1` 会按以下顺序自动探测 `claude`：
+
+1. `config.json` 的 `claude_path`（手动覆盖，可选）
+2. PATH 上的 `claude`（`Get-Command`，**最常见**——npm 全局安装或原生安装器加 PATH 的都走这条）
+3. 常见安装位置兜底（`~/.claude/local/claude.exe`、`%APPDATA%/npm/claude.cmd` 等）
+
+→ 只要你的终端能直接敲 `claude` 跑起来，就不用改任何东西。
+
+### 仅当 claude 不在 PATH 时才需改 config.json
+
+打开 [.trae/skills/claude-harness/config.json](.trae/skills/claude-harness/config.json)，把 `claude_path` 填上：
 
 ```json
 {
-  "claude_path": "C:/Users/你的用户名/.npm-global/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+  "_comment": "所有字段可选。claude 不在 PATH 时才需填 claude_path。",
+  "claude_path": "",
   "extra_args": "--dangerously-skip-permissions"
 }
 ```
 
-| 字段 | 含义 |
-|---|---|
-| `claude_path` | `claude.exe` 的绝对路径，改成你机器上的实际位置 |
-| `extra_args` | 调用 CC 时固定追加的参数，默认 `--dangerously-skip-permissions` |
+| 字段 | 含义 | 默认 |
+|---|---|---|
+| `claude_path` | `claude.exe` 绝对路径，仅当 claude 不在 PATH 时才填 | 留空走探测 |
+| `extra_args` | 调用 CC 追加的参数 | `--dangerously-skip-permissions` |
 
 **路径写法**（JSON 注意点）：
 
 - 推荐用**正斜杠 `/`**，省事且 PowerShell 也认：`C:/Users/xxx/.../claude.exe`
 - 若用反斜杠 `\`，JSON 里必须写成双反斜杠 `\\`：`C:\\Users\\xxx\\...\\claude.exe`
 
-不知道 `claude.exe` 在哪？在能跑 `claude` 的终端里执行：
+不知道 `claude.exe` 在哪？在能跑 `claude` 的终端里执行 `Get-Command claude`，返回的 `Source` 就是完整路径；若通过 npm 全局安装，`npm root -g` 给出 node_modules 路径，`claude.exe` 通常在其下的 `@anthropic-ai\claude-code\bin\` 里。
 
-```powershell
-# 若是通过 npm 全局安装
-npm root -g                          # 拿到全局 node_modules 路径
-# 通常是 <上面那个路径>\@anthropic-ai\claude-code\bin\claude.exe
-```
-
-技能加载时会用 `Test-Path` 校验路径，无效会报错停止，不会跑到一半才失败。
+找不到时技能会输出明确指引，不会跑到一半才失败。
 
 ## 使用方法
 

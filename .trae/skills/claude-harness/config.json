@@ -1,5 +1,5 @@
-{
-  "_comment": "本文件是 claude-harness 技能的配置。每个用户的 Claude Code 安装位置不同，请把 claude_path 改成你机器上的实际路径。注意：JSON 中反斜杠必须写成双反斜杠 \\\\，例如 C:\\\\Users\\\\xxx\\\\...\\\\claude.exe；也可以用正斜杠 / 避免转义，如 C:/Users/xxx/.../claude.exe。",
-  "claude_path": "C:/Users/lenovo1/.npm-global/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+﻿{
+  "_comment": "所有字段可选。claude 不在 PATH 时才需填 claude_path；extra_args 默认 --dangerously-skip-permissions。JSON 反斜杠需写成双反斜杠 \\\\，或直接用正斜杠 /。",
+  "claude_path": "",
   "extra_args": "--dangerously-skip-permissions"
 }
