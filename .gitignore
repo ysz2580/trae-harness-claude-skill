@@ -1,6 +1,9 @@
 # 本地开发用 agent 指令文件，不上传 GitHub
 AGENTS.md
 
+# 本地更新到 TRAE 的维护笔记，不上传
+UPDATE-TO-TRAE.md
+
 # 编辑器/系统杂项
 .vscode/
 .idea/
