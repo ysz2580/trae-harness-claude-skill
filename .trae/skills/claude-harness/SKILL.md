@@ -55,9 +55,18 @@ description: 你现在是 Claude Code 传话筒。当用户用语音远程控制
 
 ## 命令格式
 
-### 定位调用器脚本
+### 定位 + 调用（必须在同一条命令里）
 
-每次调用前先定位 `claude-harness.ps1`（从当前目录向上找项目级技能，再找全局技能）：
+TRAE 的 RunCommand **每次都启动新的 PowerShell 进程**，且系统执行策略通常为 `Restricted`（禁止运行 `.ps1`）。因此：
+
+- 不能用 `& $s` 直接点源调用脚本（会被执行策略拦截，`$s` 也会因 profile 加载失败而未赋值）。
+- 必须用 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $s …` 启动一个**干净的子进程**来跑脚本：
+  - `-NoProfile`：跳过 TRAE 注入的 `powershell-profile-snapshot.ps1`，从根上消除 CLIXML 报错噪声。
+  - `-ExecutionPolicy Bypass`：仅对本子进程生效，绕过 `Restricted`，**不改系统级策略**。
+  - `-File $s`：把脚本路径与后续参数（`-Prompt` / `-WorkingDirectory` / `-Continue`）原样传给脚本。
+- `$s` 是当前 shell 的变量，**定位代码与 `powershell.exe -File $s` 必须在同一条 RunCommand 里**，否则 `$s` 跨进程丢失。
+
+完整模板（定位 + 调用合一）：
 
 ```powershell
 $s = $null; $d = $PWD.Path
@@ -71,23 +80,17 @@ if (-not $s) {
   $g = Join-Path $env:USERPROFILE '.trae-cn\skills\claude-harness\resources\claude-harness.ps1'
   if (Test-Path $g) { $s = $g }
 }
-```
+if (-not $s) { Write-Error '未找到 claude-harness.ps1'; exit 1 }
 
-### 新话题（首次调用）
-
-```powershell
-& $s -Prompt "完整prompt" -WorkingDirectory "{工作目录}"
-```
-
-### 追问（接续上下文）
-
-```powershell
-& $s -Prompt "完整prompt" -WorkingDirectory "{工作目录}" -Continue
+# ↓ 新话题（首次调用）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $s -Prompt "完整prompt" -WorkingDirectory "{工作目录}"
+# ↓ 追问（接续上下文）：把上一行换成
+# powershell.exe -NoProfile -ExecutionPolicy Bypass -File $s -Prompt "完整prompt" -WorkingDirectory "{工作目录}" -Continue
 ```
 
 `-Continue` 对应 `claude -c`，复用上一轮上下文。`-WorkingDirectory` 可省略（省略则用当前目录）。
 
-> prompt 作为变量传入脚本，**天然避免 PowerShell 引号转义地狱**——含双引号、反斜杠路径的 prompt 直接传即可，无需 Here-string。
+> prompt 作为参数传给脚本，**天然避开 PowerShell 引号转义地狱**——含双引号、反斜杠路径的 prompt 直接写字面量即可。定位 `$s` 的 while 循环 + 全局兜底分支**保持不变**，只是调用方式从 `& $s` 换成 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $s`。
 
 ## 新话题 vs 追问判断
 
@@ -130,20 +133,21 @@ prompt 末尾**固定**追加：
 
 先定位调用器脚本（见「命令格式」段的定位代码，得到 `$s`），再调用：
 
-使用 `RunCommand`：
+使用 `RunCommand`（定位 `$s` 与调用必须在同一条命令里）：
 
 ```
-command: & $s -Prompt "完整prompt" -WorkingDirectory "{工作目录}"
+command: $s = $null; $d = $PWD.Path; while ($d -and -not $s) { $p = Join-Path $d '.trae\skills\claude-harness\resources\claude-harness.ps1'; if (Test-Path $p) { $s = $p }; $n = Split-Path $d -Parent; if (-not $n -or $n -eq $d) { break }; $d = $n }; if (-not $s) { $g = Join-Path $env:USERPROFILE '.trae-cn\skills\claude-harness\resources\claude-harness.ps1'; if (Test-Path $g) { $s = $g } }; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $s -Prompt "完整prompt" -WorkingDirectory "{工作目录}"
 cwd:      {工作目录}
 blocking: true
 requires_approval: false
 ```
 
-追问时加 `-Continue`。`$s` 即定位到的 `claude-harness.ps1`，路径探测、`config.json` 读取、参数组装都在脚本内完成。
+追问时把末尾 `…-File $s -Prompt "…" -WorkingDirectory "…"` 换成带 `-Continue` 的版本。路径探测、`config.json` 读取、参数组装都在 `claude-harness.ps1` 内完成。
 
 注意：
 - `blocking: true` —— 语音场景下用户在等结果，必须同步等待。
 - `requires_approval: false` —— 用户已通过触发词明确授权调用 CC，无需二次确认。
+- 必须用 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $s` 而非 `& $s`：TRAE RunCommand 每次开新进程且系统策略默认 `Restricted`，直接 `& $s` 会被拦截且产生 CLIXML 噪声。
 - prompt 经 `-Prompt` 参数传入脚本，含双引号/反斜杠路径也无需转义。
 
 ### 第 3 步：验证文件位置（仅当涉及生成文件时）
@@ -177,22 +181,23 @@ Test-Path "{工作目录}\文件名.xxx"
 
 ## 使用示例
 
-假设当前工作目录为 `E:\project\webapp`，`$s` 已定位到 `claude-harness.ps1`：
+假设当前工作目录为 `E:\project\webapp`，`$s` 已定位到 `claude-harness.ps1`（实际命令中定位与调用合并在一条 RunCommand 里，见「命令格式」段）：
 
-| 用户输入 | 判断 | 命令 |
+| 用户输入 | 判断 | 命令（省略定位代码，仅展示调用行） |
 |---|---|---|
-| `CC：帮我写个快排` | 新话题 | `& $s -Prompt "写一个快速排序算法，保存到 E:\project\webapp\quicksort.py。工作目录为 E:\project\webapp，所有文件操作请在该目录下进行" -WorkingDirectory "E:\project\webapp"` |
-| `CC：改成降序` | 追问 | `& $s -Prompt "改成降序排列" -WorkingDirectory "E:\project\webapp" -Continue` |
-| `CC：分析 E:\data\main.py` | 新话题 | `& $s -Prompt "分析 E:\data\main.py 这个文件" -WorkingDirectory "E:\data"` |
-| `用 Claude：生成报告` | 新话题 | `& $s -Prompt "生成一份报告，保存到 E:\project\webapp\report.md。工作目录为 E:\project\webapp，所有文件操作请在该目录下进行" -WorkingDirectory "E:\project\webapp"` |
-| `cc，上面那个再加个图表` | 追问 | `& $s -Prompt "在上面生成的报告中加入图表" -WorkingDirectory "E:\project\webapp" -Continue` |
+| `CC：帮我写个快排` | 新话题 | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $s -Prompt "写一个快速排序算法，保存到 E:\project\webapp\quicksort.py。工作目录为 E:\project\webapp，所有文件操作请在该目录下进行" -WorkingDirectory "E:\project\webapp"` |
+| `CC：改成降序` | 追问 | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $s -Prompt "改成降序排列" -WorkingDirectory "E:\project\webapp" -Continue` |
+| `CC：分析 E:\data\main.py` | 新话题 | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $s -Prompt "分析 E:\data\main.py 这个文件" -WorkingDirectory "E:\data"` |
+| `用 Claude：生成报告` | 新话题 | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $s -Prompt "生成一份报告，保存到 E:\project\webapp\report.md。工作目录为 E:\project\webapp，所有文件操作请在该目录下进行" -WorkingDirectory "E:\project\webapp"` |
+| `cc，上面那个再加个图表` | 追问 | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $s -Prompt "在上面生成的报告中加入图表" -WorkingDirectory "E:\project\webapp" -Continue` |
 
-> `$s` 是定位到的 `claude-harness.ps1`。每次调用前若 `$s` 未就绪，先跑「命令格式」段的定位代码。
+> 每条命令前都需先跑「命令格式」段里的定位代码得到 `$s`，**且定位与调用在同一 RunCommand**。`$s` 未就绪时定位兜底会输出 `未找到 claude-harness.ps1`。
 
 ## 重要约束
 
 - **不要**在传话筒模式下给第二意见或对比 TRAE 与 CC 的实现——用户要的是 CC 的结果，不是 TRAE 的看法。
 - **不要**手写 claude 路径或 `<claude_path>`——一律经由 `claude-harness.ps1` 调用，路径由脚本自动探测。
+- **不要**用 `& $s` 直接点源调用脚本——TRAE RunCommand 每次开新进程且系统策略默认 `Restricted`，`& $s` 会被拦截并产生 CLIXML 噪声。必须用 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $s …`。
 - **不要**为了「安全」擅自改用 `--allowedTools` 白名单——默认 `--dangerously-skip-permissions` 是语音远程场景的必需项；如确需限制，由用户在 `config.json` 的 `extra_args` 覆盖，agent 不应自作主张。
 - **不要**省略 prompt 末尾的工作目录说明——CC 在 `-p` 模式下不一定知道当前 cwd。
 - **不要**在非触发词任务上调用 CC——只有 `CC：` / `用 Claude：` / `cc，` 开头才走传话筒流程。
