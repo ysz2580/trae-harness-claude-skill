@@ -20,7 +20,8 @@
 ├── SKILL.md                          # 技能主文件（角色定位、触发条件、执行流程）
 ├── config.json                       # 配置文件（可选：仅在 claude 不在 PATH 时需要改）
 └── resources/
-    ├── claude-harness.ps1            # ★ 调用器：自动探测 claude 路径、组装参数、调用 CC
+    ├── claude-harness.cmd            # ★ 调用入口：.cmd 不受 PowerShell 执行策略限制，内部绕过策略调 .ps1
+    ├── claude-harness.ps1            # 调用器实现：自动探测 claude 路径、组装参数、调用 CC
     └── claude-invocation.md          # 调用参考（命令模板、转义、文件验证，按需读取）
 ```
 
